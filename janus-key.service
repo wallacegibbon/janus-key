@@ -1,0 +1,11 @@
+[Unit]
+Description=Janus-Key
+After=syslog.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/janus-key /dev/input/event0
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
