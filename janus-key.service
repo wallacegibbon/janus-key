@@ -1,5 +1,5 @@
 [Unit]
-Description=Janus-Key
+Description=Janus Key
 After=syslog.target
 
 [Service]

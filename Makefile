@@ -2,7 +2,7 @@ INSTALL_PATH = /usr/local/bin
 
 all: janus-key
 
-janus-key: janus-key.c
+janus-key: janus-key.c janus-key.h config.h
 	gcc `pkg-config --cflags libevdev` $< `pkg-config --libs libevdev` -o $@
 
 .PHONY: install clean
