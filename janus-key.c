@@ -370,9 +370,10 @@ main (int argc, char **argv)
       return -errno;
     }
 
-  /// We can not change the input of a existing keyboard device.  What we do is
-  /// creating a new virtual keyboard device, and rebuild the key sequences in
-  /// this virtual device.
+  /// We can not change the events of an existing keyboard device.  What we do
+  /// is creating a new virtual keyboard device (with `uinput') and rebuilding
+  /// the events (key sequences) in this virtual device while blocking the
+  /// original keyboard events.
 
   /// IMPORTANT: Creating a new (e.g. /dev/input/event18) input device.
   err = libevdev_uinput_create_from_device (dev, write_fd, &uidev);
