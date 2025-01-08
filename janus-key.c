@@ -40,7 +40,7 @@
 #include "libevdev/libevdev-uinput.h"
 #include "poll.h"
 
-#define COUNTOF(x) (sizeof(x)/sizeof(*(x)))
+#define COUNTOF(x) (sizeof(x) / sizeof(*(x)))
 
 // max delay set by user stored as a timespec struct
 struct timespec delay_timespec;
@@ -370,10 +370,16 @@ main (int argc, char **argv)
       return -errno;
     }
 
+  /// We can not change the input of a existing keyboard device.  What we do is
+  /// creating a new virtual keyboard device, and rebuild the key sequences in
+  /// this virtual device.
+
+  /// IMPORTANT: Creating a new (e.g. /dev/input/event18) input device.
   err = libevdev_uinput_create_from_device (dev, write_fd, &uidev);
   if (err != 0)
     return err;
 
+  /// IMPORTANT: Blocking the events of the original keyboard device.
   int grab = libevdev_grab (dev, LIBEVDEV_GRAB);
   if (grab < 0)
     {
