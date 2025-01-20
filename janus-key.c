@@ -229,7 +229,7 @@ handle_ev_key (const struct libevdev_uinput *uidev, unsigned int code,
   if (jk_index >= 0)
     {
       mod_key *jk = &mod_map[jk_index];
-      if (value == 1)
+      if (value == 1) // key press
 	{
 	  jk->state = 1;
 	  clock_gettime (CLOCK_MONOTONIC, &jk->last_time_down);
@@ -242,17 +242,17 @@ handle_ev_key (const struct libevdev_uinput *uidev, unsigned int code,
 	  jk->send_down_at = scheduled_delayed_down;
 	  jk->delayed_down = 1;
 	}
-      else if (value == 2)
+      else if (value == 2) // autorepeat
 	{
 	  jk->state = 2;
 	  last_input_was_special_combination = 0;
 	}
-      else
+      else // key release
 	{
 	  jk->delayed_down = 0;
 	  jk->state = 0;
 	  clock_gettime (CLOCK_MONOTONIC, &now);
-	  //timespec_add(&jk->last_time_down, &tp_max_delay, &tp_sum);
+	  //timespec_add (&jk->last_time_down, &tp_max_delay, &tp_sum);
 	  timespec_add (&jk->last_time_down, &delay_timespec, &tp_sum);
 	  if (timespec_cmp (&now, &tp_sum) == 1)
 	    {			// is considered as tap
@@ -279,8 +279,8 @@ handle_ev_key (const struct libevdev_uinput *uidev, unsigned int code,
 		  send_primary_function (uidev, jk->key, 0);
 		}
 	    }
-	  else
-	    {			// is not considered as tap
+	  else // is not considered as tap
+	    {
 	      if (jk->last_secondary_function_value_sent != 0)
 		{
 		  send_key_ev_and_sync (uidev, jk->secondary_function, 0);
@@ -291,7 +291,7 @@ handle_ev_key (const struct libevdev_uinput *uidev, unsigned int code,
     }
   else
     {
-      if (value == 1)
+      if (value == 1) // key press
 	{
 	  if (some_jk_are_down_or_held () >= 0)
 	    {
@@ -304,7 +304,7 @@ handle_ev_key (const struct libevdev_uinput *uidev, unsigned int code,
 	    }
 	  send_primary_function (uidev, code, 1);
 	}
-      else if (value == 2)
+      else if (value == 2) // autorepeat
 	{
 	  if (some_jk_are_down_or_held () >= 0)
 	    {
@@ -317,8 +317,8 @@ handle_ev_key (const struct libevdev_uinput *uidev, unsigned int code,
 	    }
 	  send_primary_function (uidev, code, 2);
 	}
-      else
-	{			// if (value == 0)
+      else // key release
+	{
 	  send_primary_function (uidev, code, 0);
 	}
     }
