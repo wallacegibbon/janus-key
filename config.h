@@ -3,7 +3,9 @@
 // KEY | 1st FUNCTION | 2nd FUNCTION
 mod_key mod_map[] =
   {
-    {KEY_SPACE, 0, KEY_LEFTCTRL},
+    //{KEY_SPACE, 0, KEY_LEFTCTRL},
+    {KEY_SPACE, KEY_LEFTCTRL},
+    {KEY_TAB, KEY_SPACE},
 
     /// CAPSLOCK into  ESC
     {KEY_CAPSLOCK, KEY_ESC},
