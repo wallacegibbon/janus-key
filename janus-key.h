@@ -1,17 +1,50 @@
 #include "libevdev/libevdev-uinput.h"
+#include <sys/types.h>
 #include <time.h>
 
-// Modified key: key to which a primary and/or a secondary function
-// has been assigned. (Those keys to which a secondary function has
-// been assigned are called `janus keys`.)
+/// Keys to which a secondary function has been assigned are called JANUS KEYS.
+
+/// For `struct input_event' (defined in <linux/input.h>):
+///
+/// - `time' is the timestamp, it returns the time at which the event happened.
+///
+/// - `type' is for example EV_REL for relative moment, EV_KEY for a keypress or release.
+///   More types are defined in include/linux/input-event-codes.h.
+///
+/// - `code' is event code, for example REL_X or KEY_BACKSPACE,
+///   again a complete list is in include/linux/input-event-codes.h.
+///
+/// - `value' is the value the event carries.
+///   Either a relative change for EV_REL, absolute new value for EV_ABS (joysticks ...),
+///   or 0 for EV_KEY for release, 1 for keypress and 2 for autorepeat.
+
 typedef struct
 {
   unsigned int key;
+
+  /// `primary_function' can be 0, when it is 0, use `key' for primary function.
   unsigned int primary_function;
   unsigned int secondary_function;
-  unsigned int state;		// physical state of `key`. (= the last value received)
+
+  /// Physical state of `key`. (= the last value received)
+  /// This field stores the `value' of a `struct input_event' object.
+  unsigned int state;
+
   unsigned int last_secondary_function_value_sent;
-  unsigned int delayed_down;	// whether delayed remapping should happenx
-  struct timespec send_down_at;	// time at which delayed remapping should happen
+
   struct timespec last_time_down;
-} mod_key;
+
+  /// time at which delayed remapping should happen
+  struct timespec send_down_at;
+  /// whether delayed remapping should happen
+  unsigned int delayed_down;
+}
+  mod_key;
+
+static inline unsigned int
+mod_key_primary_function (mod_key *self)
+{
+  return self->primary_function > 0
+    ? self->primary_function
+    : self->key;
+}
