@@ -43,6 +43,7 @@
 /// This time will be filled with `max_delay' defined in config.h
 struct timespec delay_timespec;
 
+/// Regular keys or primary function of mapped keys (non-janus keys) set this flag to 1.
 int last_input_was_special_combination = 0;
 
 /// For calculating delay
@@ -187,6 +188,20 @@ send_down_or_held_jks_secondary_function (struct libevdev_uinput *uidev, int val
 }
 
 static void
+send_holding_modifier_keys (struct libevdev_uinput *uidev)
+{
+  if (some_jk_are_down_or_held () >= 0)
+    {
+      send_down_or_held_jks_secondary_function (uidev, 1);
+      last_input_was_special_combination = 1;
+    }
+  else
+    {
+      last_input_was_special_combination = 0;
+    }
+}
+
+static void
 send_primary_function (struct libevdev_uinput *uidev, unsigned int code, int value)
 {
   int i = is_in_mod_map (code);
@@ -196,15 +211,15 @@ send_primary_function (struct libevdev_uinput *uidev, unsigned int code, int val
     send_key_ev_and_sync (uidev, code, value);
 }
 
+/// Those whose primary_functions are different from their secondary_functions are called `janus'.
 static void
 handle_ev_key_janus (struct libevdev_uinput *uidev, unsigned int code, int value, mod_key *jk)
 {
+  jk->state = value;
   if (value == 1)
     {
-      struct timespec scheduled_delayed_down;
-      jk->state = 1;
       last_input_was_special_combination = 0;
-
+      struct timespec scheduled_delayed_down;
       clock_gettime (CLOCK_MONOTONIC, &jk->last_time_down);
       timespec_add (&jk->last_time_down, &delay_timespec, &scheduled_delayed_down);
       jk->send_down_at = scheduled_delayed_down;
@@ -212,51 +227,45 @@ handle_ev_key_janus (struct libevdev_uinput *uidev, unsigned int code, int value
     }
   else if (value == 2)
     {
-      jk->state = 2;
       last_input_was_special_combination = 0;
     }
   else
     {
       jk->delayed_down = 0;
-      jk->state = 0;
       clock_gettime (CLOCK_MONOTONIC, &now);
       //timespec_add (&jk->last_time_down, &tp_max_delay, &tp_sum);
       timespec_add (&jk->last_time_down, &delay_timespec, &tp_sum);
       if (timespec_cmp (&now, &tp_sum) < 0)
-	{ // is considered as tap
+	{ // Considered as tap (delayed click is not triggered)
 	  if (last_input_was_special_combination)
-	    {
+	    { // At the end of a special combination,
+	      // but this janus key may work in its primary function.
 	      if (jk->last_secondary_function_value_sent != 0)
-		send_key_ev_and_sync (uidev, jk->secondary_function, 0);
-
-	      jk->last_secondary_function_value_sent = 0;
+		{ // This janus key was acting its secondary function.
+		  send_key_ev_and_sync (uidev, jk->secondary_function, 0);
+		  jk->last_secondary_function_value_sent = 0;
+		}
 	    }
 	  else
-	    {
-	      if (some_jk_are_down_or_held () >= 0)
-		{
-		  last_input_was_special_combination = 1;
-		  send_down_or_held_jks_secondary_function (uidev, 1);
-		}
-	      else
-		send_down_or_held_jks_secondary_function (uidev, 0);
-
+	    { // This janus key is acting its primary function.
+	      send_holding_modifier_keys (uidev);
 	      send_primary_function (uidev, jk->key, 1);
 	      send_primary_function (uidev, jk->key, 0);
 	    }
 	}
       else
-	{ // is not considered as tap
+	{ // Not considered as tap (delayed click has already been sent)
 	  if (jk->last_secondary_function_value_sent != 0)
-	    send_key_ev_and_sync (uidev, jk->secondary_function, 0);
-
-	  jk->last_secondary_function_value_sent = 0;
+	    {
+	      send_key_ev_and_sync (uidev, jk->secondary_function, 0);
+	      jk->last_secondary_function_value_sent = 0;
+	    }
 	}
     }
 }
 
 static void
-handle_ev_key_normal (struct libevdev_uinput *uidev, unsigned int code, int value)
+handle_ev_key_normal_or_mapping (struct libevdev_uinput *uidev, unsigned int code, int value)
 {
   /// No special handling for key release.
   if (value == 0)
@@ -266,14 +275,7 @@ handle_ev_key_normal (struct libevdev_uinput *uidev, unsigned int code, int valu
     }
 
   /// For Key DOWN or HELD, send active janus keys' secondary function first.
-  if (some_jk_are_down_or_held () >= 0)
-    {
-      last_input_was_special_combination = 1;
-      send_down_or_held_jks_secondary_function (uidev, 1);
-    }
-  else
-    last_input_was_special_combination = 0;
-
+  send_holding_modifier_keys (uidev);
   send_primary_function (uidev, code, value);
 }
 
@@ -284,7 +286,7 @@ handle_ev_key (struct libevdev_uinput *uidev, unsigned int code, int value)
   if (jk_index >= 0)
     handle_ev_key_janus (uidev, code, value, &mod_map[jk_index]);
   else
-    handle_ev_key_normal (uidev, code, value);
+    handle_ev_key_normal_or_mapping (uidev, code, value);
 }
 
 int
@@ -449,9 +451,10 @@ main (int argc, char **argv)
 	      && timespec_cmp (&now, &mod_map[i].send_down_at) >= 0)
 	    {
 	      if (mod_map[i].last_secondary_function_value_sent != 1)
-		send_key_ev_and_sync (uidev, mod_map[i].secondary_function, 1);
-
-	      mod_map[i].last_secondary_function_value_sent = 1;
+		{
+		  send_key_ev_and_sync (uidev, mod_map[i].secondary_function, 1);
+		  mod_map[i].last_secondary_function_value_sent = 1;
+		}
 	      mod_map[i].delayed_down = 0;
 	    }
 	}
