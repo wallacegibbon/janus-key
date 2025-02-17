@@ -44,7 +44,11 @@ typedef struct
 static inline unsigned int
 mod_key_primary_function (mod_key *self)
 {
-  return self->primary_function > 0
-    ? self->primary_function
-    : self->key;
+  return self->primary_function > 0 ? self->primary_function : self->key;
+}
+
+static inline int
+mod_key_secondary_down_or_held (mod_key *self)
+{
+  return (self->state == 1 || self->state == 2) && self->secondary_function > 0;
 }

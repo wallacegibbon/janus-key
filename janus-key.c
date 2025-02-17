@@ -127,20 +127,29 @@ send_key_ev_and_sync (struct libevdev_uinput *uidev, unsigned int code, int valu
   //printf("Sending %u %u\n", code, value);
 }
 
+static int
+send_secondary_function_once (struct libevdev_uinput *uidev, mod_key *m, int value)
+{
+  if (m->last_secondary_function_value_sent != value)
+    {
+      send_key_ev_and_sync (uidev, m->secondary_function, value);
+      m->last_secondary_function_value_sent = value;
+      return 1;
+    }
+  else
+    return 0;
+}
+
 static void
 send_down_or_held_jks_secondary_function (struct libevdev_uinput *uidev, int value)
 {
   for (size_t i = 0; i < COUNTOF (mod_map); i++)
     {
-      if ((mod_map[i].state == 1 || mod_map[i].state == 2)
-	  && mod_map[i].secondary_function > 0)
+      mod_key *tmp = &mod_map[i];
+      if (mod_key_secondary_down_or_held (tmp))
 	{
-	  mod_map[i].delayed_down = 0;
-	  if (mod_map[i].last_secondary_function_value_sent != value)
-	    {
-	      send_key_ev_and_sync (uidev, mod_map[i].secondary_function, value);
-	      mod_map[i].last_secondary_function_value_sent = value;
-	    }
+	  tmp->delayed_down = 0;
+	  send_secondary_function_once (uidev, tmp, value);
 	}
     }
 }
@@ -150,7 +159,10 @@ send_primary_function (struct libevdev_uinput *uidev, unsigned int code, int val
 {
   int i = is_in_mod_map (code);
   if (i >= 0)
-    send_key_ev_and_sync (uidev, mod_key_primary_function (&mod_map[i]), value);
+    {
+      mod_key *tmp = &mod_map[i];
+      send_key_ev_and_sync (uidev, mod_key_primary_function (tmp), value);
+    }
   else
     send_key_ev_and_sync (uidev, code, value);
 }
@@ -180,13 +192,8 @@ handle_ev_key_janus (struct libevdev_uinput *uidev, unsigned int code, int value
       timespec_add (&jk->last_time_down, &delay_timespec, &tp_sum);
       if (timespec_cmp (&now, &tp_sum) < 0)
 	{ // Considered as tap (delayed click is not triggered)
-	  if (jk->last_secondary_function_value_sent != 0)
-	    { // This janus key was acting its secondary function.
-	      send_key_ev_and_sync (uidev, jk->secondary_function, 0);
-	      jk->last_secondary_function_value_sent = 0;
-	    }
-	  else
-	    { // This janus key is acting its primary function.
+	  if (!send_secondary_function_once (uidev, jk, 0))
+	    { // last_send is zero, which means this janus key is acting its primary function.
 	      send_down_or_held_jks_secondary_function (uidev, 1);
 	      send_primary_function (uidev, jk->key, 1);
 	      send_primary_function (uidev, jk->key, 0);
@@ -194,11 +201,7 @@ handle_ev_key_janus (struct libevdev_uinput *uidev, unsigned int code, int value
 	}
       else
 	{ // Not considered as tap (delayed click has already been sent)
-	  if (jk->last_secondary_function_value_sent != 0)
-	    {
-	      send_key_ev_and_sync (uidev, jk->secondary_function, 0);
-	      jk->last_secondary_function_value_sent = 0;
-	    }
+	  send_secondary_function_once (uidev, jk, 0);
 	}
     }
 }
@@ -335,10 +338,10 @@ main (int argc, char **argv)
 	  struct timespec soonest_val = {.tv_sec = 0,.tv_nsec = 0 };
 	  for (size_t i = 1; i < COUNTOF (mod_map); i++)
 	    {
-	      if (mod_map[i].delayed_down
-		  && timespec_cmp (&mod_map[i].send_down_at, &soonest_val) < 0)
+	      mod_key *tmp = &mod_map[i];
+	      if (tmp->delayed_down && timespec_cmp (&tmp->send_down_at, &soonest_val) < 0)
 		{
-		  soonest_val = mod_map[i].send_down_at;
+		  soonest_val = tmp->send_down_at;
 		  soonest_index = i;
 		}
 	    }
@@ -386,15 +389,11 @@ main (int argc, char **argv)
 
 	  /// The key has been held for more than `max_delay' milliseconds.
 	  /// It's secondary function anyway now.
-	  if (mod_map[i].delayed_down
-	      && timespec_cmp (&now, &mod_map[i].send_down_at) >= 0)
+	  mod_key *tmp = &mod_map[i];
+	  if (tmp->delayed_down && timespec_cmp (&now, &tmp->send_down_at) >= 0)
 	    {
-	      if (mod_map[i].last_secondary_function_value_sent != 1)
-		{
-		  send_key_ev_and_sync (uidev, mod_map[i].secondary_function, 1);
-		  mod_map[i].last_secondary_function_value_sent = 1;
-		}
-	      mod_map[i].delayed_down = 0;
+	      send_secondary_function_once (uidev, tmp, 1);
+	      tmp->delayed_down = 0;
 	    }
 	}
 
