@@ -1,24 +1,3 @@
-/*
-
-  janus-key. Give keys a double function.
-
-  Copyright (C) 2021, 2022, 2023  Giulio Pietroiusti
-
-  This program is free software: you can redistribute it and/or modify
-  it under the terms of the GNU General Public License as published by
-  the Free Software Foundation, either version 3 of the License, or
-  (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
-*/
-
 #include "./config.h"
 #include <assert.h>
 #include <bits/time.h>
@@ -43,28 +22,9 @@
 /// This time will be filled with `max_delay' defined in config.h
 struct timespec delay_timespec;
 
-/// Regular keys or primary function of mapped keys (non-janus keys) set this flag to 1.
-int last_input_was_special_combination = 0;
-
 /// For calculating delay
 struct timespec now;
 struct timespec tp_sum;
-
-// If any of the janus keys is down or held return the index of the
-// first one of them in the mod_map. Otherwise, return -1.
-static int
-some_jk_are_down_or_held ()
-{
-  for (size_t i = 0; i < COUNTOF (mod_map); i++)
-    {
-      if ((mod_map[i].state == 1 || mod_map[i].state == 2)
-	  && mod_map[i].secondary_function > 0)
-	{
-	  return i;
-	}
-    }
-  return -1;
-}
 
 /// If `key` is in the mod_map, then return its index. Otherwise return -1.
 static int
@@ -83,12 +43,10 @@ static int
 is_janus (unsigned int key)
 {
   int i = is_in_mod_map (key);
-  if (i >= 0)
-    {
-      if (mod_map[i].secondary_function > 0)
-	return i;
-    }
-  return -1;
+  if (i >= 0 && mod_map[i].secondary_function > 0)
+    return i;
+  else
+    return -1;
 }
 
 static int
@@ -188,20 +146,6 @@ send_down_or_held_jks_secondary_function (struct libevdev_uinput *uidev, int val
 }
 
 static void
-send_holding_modifier_keys (struct libevdev_uinput *uidev)
-{
-  if (some_jk_are_down_or_held () >= 0)
-    {
-      send_down_or_held_jks_secondary_function (uidev, 1);
-      last_input_was_special_combination = 1;
-    }
-  else
-    {
-      last_input_was_special_combination = 0;
-    }
-}
-
-static void
 send_primary_function (struct libevdev_uinput *uidev, unsigned int code, int value)
 {
   int i = is_in_mod_map (code);
@@ -218,7 +162,6 @@ handle_ev_key_janus (struct libevdev_uinput *uidev, unsigned int code, int value
   jk->state = value;
   if (value == 1)
     {
-      last_input_was_special_combination = 0;
       struct timespec scheduled_delayed_down;
       clock_gettime (CLOCK_MONOTONIC, &jk->last_time_down);
       timespec_add (&jk->last_time_down, &delay_timespec, &scheduled_delayed_down);
@@ -227,7 +170,7 @@ handle_ev_key_janus (struct libevdev_uinput *uidev, unsigned int code, int value
     }
   else if (value == 2)
     {
-      last_input_was_special_combination = 0;
+      /// Nothing to do here, things had already been done in `value == 1' branch.
     }
   else
     {
@@ -237,18 +180,14 @@ handle_ev_key_janus (struct libevdev_uinput *uidev, unsigned int code, int value
       timespec_add (&jk->last_time_down, &delay_timespec, &tp_sum);
       if (timespec_cmp (&now, &tp_sum) < 0)
 	{ // Considered as tap (delayed click is not triggered)
-	  if (last_input_was_special_combination)
-	    { // At the end of a special combination,
-	      // but this janus key may work in its primary function.
-	      if (jk->last_secondary_function_value_sent != 0)
-		{ // This janus key was acting its secondary function.
-		  send_key_ev_and_sync (uidev, jk->secondary_function, 0);
-		  jk->last_secondary_function_value_sent = 0;
-		}
+	  if (jk->last_secondary_function_value_sent != 0)
+	    { // This janus key was acting its secondary function.
+	      send_key_ev_and_sync (uidev, jk->secondary_function, 0);
+	      jk->last_secondary_function_value_sent = 0;
 	    }
 	  else
 	    { // This janus key is acting its primary function.
-	      send_holding_modifier_keys (uidev);
+	      send_down_or_held_jks_secondary_function (uidev, 1);
 	      send_primary_function (uidev, jk->key, 1);
 	      send_primary_function (uidev, jk->key, 0);
 	    }
@@ -275,7 +214,7 @@ handle_ev_key_normal_or_mapping (struct libevdev_uinput *uidev, unsigned int cod
     }
 
   /// For Key DOWN or HELD, send active janus keys' secondary function first.
-  send_holding_modifier_keys (uidev);
+  send_down_or_held_jks_secondary_function (uidev, 1);
   send_primary_function (uidev, code, value);
 }
 
