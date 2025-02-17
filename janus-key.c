@@ -22,10 +22,6 @@
 /// This time will be filled with `max_delay' defined in config.h
 struct timespec delay_timespec;
 
-/// For calculating delay
-struct timespec now;
-struct timespec tp_sum;
-
 /// If `key` is in the mod_map, then return its index. Otherwise return -1.
 static int
 is_in_mod_map (unsigned int key)
@@ -187,10 +183,10 @@ handle_ev_key_janus (struct libevdev_uinput *uidev, unsigned int code, int value
   else
     {
       jk->delayed_down = 0;
+      struct timespec now, sum;
       clock_gettime (CLOCK_MONOTONIC, &now);
-      //timespec_add (&jk->last_time_down, &tp_max_delay, &tp_sum);
-      timespec_add (&jk->last_time_down, &delay_timespec, &tp_sum);
-      if (timespec_cmp (&now, &tp_sum) < 0)
+      timespec_add (&jk->last_time_down, &delay_timespec, &sum);
+      if (timespec_cmp (&now, &sum) < 0)
 	{ // Considered as tap (delayed click is not triggered)
 	  if (!send_secondary_function_once (uidev, jk, 0))
 	    { // last_send is zero, which means this janus key is acting its primary function.
@@ -356,11 +352,13 @@ main (int argc, char **argv)
 	    }
 	  else
 	    {
+	      struct timespec now;
 	      clock_gettime (CLOCK_MONOTONIC, &now);
-	      if (timespec_cmp (&now, &mod_map[soonest_index].send_down_at) < 0)
+	      mod_key *tmp = &mod_map[soonest_index];
+	      if (timespec_cmp (&now, &tmp->send_down_at) < 0)
 		{
 		  should_poll = 1;
-		  timespec_sub (&now, &mod_map[soonest_index].send_down_at, &timeout);
+		  timespec_sub (&now, &tmp->send_down_at, &timeout);
 		}
 	    }
 	  if (should_poll && poll (&poll_fd, 1, poll_timeout))
@@ -384,12 +382,13 @@ main (int argc, char **argv)
       // handle timers
       for (size_t i = 0; i < COUNTOF (mod_map); i++)
 	{
+	  mod_key *tmp = &mod_map[i];
+ 	  struct timespec now;
 	  clock_gettime (CLOCK_MONOTONIC, &now);
-	  timespec_sub (&now, &mod_map[i].send_down_at, &timeout);
+	  timespec_sub (&now, &tmp->send_down_at, &timeout);
 
 	  /// The key has been held for more than `max_delay' milliseconds.
 	  /// It's secondary function anyway now.
-	  mod_key *tmp = &mod_map[i];
 	  if (tmp->delayed_down && timespec_cmp (&now, &tmp->send_down_at) >= 0)
 	    {
 	      send_secondary_function_once (uidev, tmp, 1);

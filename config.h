@@ -12,4 +12,3 @@ mod_key mod_map[] =
 // If a key is held down for a time greater than max_delay, then,
 // when released, it will not send its primary function.
 unsigned int max_delay = 300;
-
