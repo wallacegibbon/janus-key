@@ -371,26 +371,18 @@ main (int argc, char **argv)
 	  perror ("pending");
 	  exit (1);
 	}
-      else if (has_pending_events == 1)
-	{ // One ore more events available
-	  got_event = 1;
-	  rc = evdev_read_skip_sync (dev, &event);
-	}
-      else
-	{ // No event available.
-	  int soonest_index = soonest_delayed_down ();
-	  if (soonest_index == -1
-	      || timespec_cmp_now (&mod_map[soonest_index].send_down_at) < 0)
+
+      if (has_pending_events == 0)
+	{
+	  if (poll (&poll_fd, 1, -1) <= 0)
 	    {
-	      if (poll (&poll_fd, 1, -1) <= 0)
-		{
-		  perror ("poll failed");
-		  exit (1);
-		}
-	      got_event = 1;
-	      rc = evdev_read_skip_sync (dev, &event);
+	      perror ("poll failed");
+	      exit (1);
 	    }
 	}
+
+      got_event = 1;
+      rc = evdev_read_skip_sync (dev, &event);
 
       handle_timeout (uidev);
 
