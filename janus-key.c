@@ -334,22 +334,17 @@ main (int argc, char **argv)
 
   /// variables to manage timeout
   struct input_event event;
-  // if true then we have got an event, otherwise we have timed out
-  int got_event = 0;
 
   while (rc == LIBEVDEV_READ_STATUS_SYNC
 	 || rc == LIBEVDEV_READ_STATUS_SUCCESS
 	 || rc == -EAGAIN)
     {
       int has_pending_events = libevdev_has_event_pending (dev);
-      got_event = 0;
-
       if (has_pending_events < 0)
 	{
 	  perror ("pending");
 	  exit (1);
 	}
-
       if (has_pending_events == 0)
 	{
 	  if (poll (&poll_fd, 1, -1) <= 0)
@@ -359,18 +354,14 @@ main (int argc, char **argv)
 	    }
 	}
 
-      got_event = 1;
       rc = evdev_read_skip_sync (dev, &event);
-
-      handle_timeout (uidev);
-
-      // handle new event if we have one
-      if (got_event && rc == LIBEVDEV_READ_STATUS_SUCCESS)
+      if (rc == LIBEVDEV_READ_STATUS_SUCCESS)
 	{
 	  if (event.type == EV_KEY)
 	    handle_ev_key (uidev, event.code, event.value);
 	}
 
+      handle_timeout (uidev);
     }
 
   if (rc != LIBEVDEV_READ_STATUS_SUCCESS && rc != -EAGAIN)
