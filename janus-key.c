@@ -1,3 +1,9 @@
+/// We can not change the events of an existing keyboard device.
+///
+/// What we do is creating a new virtual keyboard device (with `uinput')
+/// and rebuilding the events in this virtual device
+/// while blocking the original keyboard events.
+
 #include "./config.h"
 #include <assert.h>
 #include <bits/time.h>
@@ -227,6 +233,62 @@ handle_ev_key (struct libevdev_uinput *uidev, unsigned int code, int value)
     handle_ev_key_normal_or_mapping (uidev, code, value);
 }
 
+static void
+handle_timeout (struct libevdev_uinput *uidev)
+{
+  for (size_t i = 0; i < COUNTOF (mod_map); i++)
+    {
+      mod_key *tmp = &mod_map[i];
+      struct timespec now;
+      clock_gettime (CLOCK_MONOTONIC, &now);
+      if (tmp->delayed_down && timespec_cmp (&now, &tmp->send_down_at) >= 0)
+	{ // The key has been held for more than `max_delay' milliseconds.
+	  // It's secondary function anyway now.
+	  send_secondary_function_once (uidev, tmp, 1);
+	  tmp->delayed_down = 0;
+	}
+    }
+}
+
+static int
+soonest_delayed_down ()
+{
+  struct timespec soonest_val = {.tv_sec = 0,.tv_nsec = 0 };
+  int soonest_index = -1;
+
+  for (size_t i = 1; i < COUNTOF (mod_map); i++)
+    {
+      mod_key *tmp = &mod_map[i];
+      if (tmp->delayed_down && timespec_cmp (&tmp->send_down_at, &soonest_val) < 0)
+	{
+	  soonest_val = tmp->send_down_at;
+	  soonest_index = i;
+	}
+    }
+
+  return soonest_index;
+}
+
+static int
+evdev_read_skip_sync (struct libevdev *dev, struct input_event *event)
+{
+  int r = libevdev_next_event (dev,
+			       LIBEVDEV_READ_FLAG_NORMAL | LIBEVDEV_READ_FLAG_BLOCKING,
+			       event);
+
+  if (r == LIBEVDEV_READ_STATUS_SYNC)
+    {
+      printf ("janus_key: dropped\n");
+
+      while (r == LIBEVDEV_READ_STATUS_SYNC)
+	r = libevdev_next_event (dev, LIBEVDEV_READ_FLAG_SYNC, event);
+
+      printf ("janus_key: re-synced\n");
+    }
+
+  return r;
+}
+
 int
 main (int argc, char **argv)
 {
@@ -277,12 +339,6 @@ main (int argc, char **argv)
       return -errno;
     }
 
-  /// We can not change the events of an existing keyboard device.
-  ///
-  /// What we do is creating a new virtual keyboard device (with `uinput')
-  /// and rebuilding the events in this virtual device
-  /// while blocking the original keyboard events.
-
   /// IMPORTANT: Creating a new (e.g. /dev/input/event18) input device.
   err = libevdev_uinput_create_from_device (dev, write_fd, &uidev);
   if (err != 0)
@@ -302,7 +358,6 @@ main (int argc, char **argv)
     {
       int has_pending_events = libevdev_has_event_pending (dev);
       got_event = 0;
-      struct timespec timeout;
 
       if (has_pending_events < 0)
 	{
@@ -313,37 +368,11 @@ main (int argc, char **argv)
       if (has_pending_events == 1)
 	{
 	  got_event = 1;
-	  rc = libevdev_next_event (dev,
-				    LIBEVDEV_READ_FLAG_NORMAL | LIBEVDEV_READ_FLAG_BLOCKING,
-				    &event);
-
-	  if (rc == LIBEVDEV_READ_STATUS_SYNC)
-	    {
-	      printf ("janus_key: dropped\n");
-	      while (rc == LIBEVDEV_READ_STATUS_SYNC)
-		rc = libevdev_next_event (dev, LIBEVDEV_READ_FLAG_SYNC, &event);
-
-	      printf ("janus_key: re-synced\n");
-	    }
+	  rc = evdev_read_skip_sync (dev, &event);
 	}
       else
 	{
-	  // find that mod_key whose `delayed_down` is true and has the soonest `send_down_at`, if any.
-	  // there might not be a mod_key that satisfies those conditions
-	  int soonest_index = -1;
-	  struct timespec soonest_val = {.tv_sec = 0,.tv_nsec = 0 };
-	  for (size_t i = 1; i < COUNTOF (mod_map); i++)
-	    {
-	      mod_key *tmp = &mod_map[i];
-	      if (tmp->delayed_down && timespec_cmp (&tmp->send_down_at, &soonest_val) < 0)
-		{
-		  soonest_val = tmp->send_down_at;
-		  soonest_index = i;
-		}
-	    }
-
-	  // decide whether to poll and calculate timeout
-	  long poll_timeout = -1;
+	  int soonest_index = soonest_delayed_down ();
 	  int should_poll = 0;
 	  if (soonest_index == -1)
 	    {
@@ -358,43 +387,21 @@ main (int argc, char **argv)
 	      if (timespec_cmp (&now, &tmp->send_down_at) < 0)
 		{
 		  should_poll = 1;
-		  timespec_sub (&now, &tmp->send_down_at, &timeout);
 		}
 	    }
-	  if (should_poll && poll (&poll_fd, 1, poll_timeout))
+	  if (should_poll)
 	    {
-	      got_event = 1;
-	      rc = libevdev_next_event (dev,
-					LIBEVDEV_READ_FLAG_NORMAL | LIBEVDEV_READ_FLAG_BLOCKING,
-					&event);
-
-	      if (rc == LIBEVDEV_READ_STATUS_SYNC)
+	      if (poll (&poll_fd, 1, -1) <= 0)
 		{
-		  printf ("janus_key: dropped (after poll returned true)\n");
-		  while (rc == LIBEVDEV_READ_STATUS_SYNC)
-		    rc = libevdev_next_event (dev, LIBEVDEV_READ_FLAG_SYNC, &event);
-
-		  printf ("janus_key: re-synced (after poll returned true)\n");
+		  perror ("poll failed");
+		  exit (1);
 		}
+	      got_event = 1;
+	      rc = evdev_read_skip_sync (dev, &event);
 	    }
 	}
 
-      // handle timers
-      for (size_t i = 0; i < COUNTOF (mod_map); i++)
-	{
-	  mod_key *tmp = &mod_map[i];
- 	  struct timespec now;
-	  clock_gettime (CLOCK_MONOTONIC, &now);
-	  timespec_sub (&now, &tmp->send_down_at, &timeout);
-
-	  /// The key has been held for more than `max_delay' milliseconds.
-	  /// It's secondary function anyway now.
-	  if (tmp->delayed_down && timespec_cmp (&now, &tmp->send_down_at) >= 0)
-	    {
-	      send_secondary_function_once (uidev, tmp, 1);
-	      tmp->delayed_down = 0;
-	    }
-	}
+      handle_timeout (uidev);
 
       // handle new event if we have one
       if (got_event && rc == LIBEVDEV_READ_STATUS_SUCCESS)
