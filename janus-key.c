@@ -256,28 +256,6 @@ handle_timeout (struct libevdev_uinput *uidev)
 }
 
 static int
-soonest_delayed_down ()
-{
-  struct timespec
-    soonest_val = {.tv_sec = 0,.tv_nsec = 0 },
-    *soonest = &soonest_val;
-
-  int soonest_index = -1;
-
-  for (size_t i = 1; i < COUNTOF (mod_map); i++)
-    {
-      mod_key *tmp = &mod_map[i];
-      if (tmp->delayed_down && timespec_cmp (&tmp->send_down_at, soonest) < 0)
-	{
-	  soonest = &tmp->send_down_at;
-	  soonest_index = i;
-	}
-    }
-
-  return soonest_index;
-}
-
-static int
 evdev_read_skip_sync (struct libevdev *dev, struct input_event *event)
 {
   int r = libevdev_next_event (dev,
