@@ -69,6 +69,14 @@ timespec_cmp (struct timespec *tp1, struct timespec *tp2)
     }
 }
 
+static inline int
+timespec_cmp_now (struct timespec *t)
+{
+  struct timespec now;
+  clock_gettime (CLOCK_MONOTONIC, &now);
+  return timespec_cmp (&now, t);
+}
+
 static void
 timespec_add (struct timespec *a, struct timespec *b, struct timespec *c)
 {
@@ -189,10 +197,9 @@ handle_ev_key_janus (struct libevdev_uinput *uidev, unsigned int code, int value
   else
     {
       jk->delayed_down = 0;
-      struct timespec now, sum;
-      clock_gettime (CLOCK_MONOTONIC, &now);
+      struct timespec sum;
       timespec_add (&jk->last_time_down, &delay_timespec, &sum);
-      if (timespec_cmp (&now, &sum) < 0)
+      if (timespec_cmp_now (&sum) < 0)
 	{ // Considered as tap (delayed click is not triggered)
 	  if (!send_secondary_function_once (uidev, jk, 0))
 	    { // last_send is zero, which means this janus key is acting its primary function.
@@ -239,9 +246,7 @@ handle_timeout (struct libevdev_uinput *uidev)
   for (size_t i = 0; i < COUNTOF (mod_map); i++)
     {
       mod_key *tmp = &mod_map[i];
-      struct timespec now;
-      clock_gettime (CLOCK_MONOTONIC, &now);
-      if (tmp->delayed_down && timespec_cmp (&now, &tmp->send_down_at) >= 0)
+      if (tmp->delayed_down && timespec_cmp_now (&tmp->send_down_at) >= 0)
 	{ // The key has been held for more than `max_delay' milliseconds.
 	  // It's secondary function anyway now.
 	  send_secondary_function_once (uidev, tmp, 1);
@@ -253,15 +258,18 @@ handle_timeout (struct libevdev_uinput *uidev)
 static int
 soonest_delayed_down ()
 {
-  struct timespec soonest_val = {.tv_sec = 0,.tv_nsec = 0 };
+  struct timespec
+    soonest_val = {.tv_sec = 0,.tv_nsec = 0 },
+    *soonest = &soonest_val;
+
   int soonest_index = -1;
 
   for (size_t i = 1; i < COUNTOF (mod_map); i++)
     {
       mod_key *tmp = &mod_map[i];
-      if (tmp->delayed_down && timespec_cmp (&tmp->send_down_at, &soonest_val) < 0)
+      if (tmp->delayed_down && timespec_cmp (&tmp->send_down_at, soonest) < 0)
 	{
-	  soonest_val = tmp->send_down_at;
+	  soonest = &tmp->send_down_at;
 	  soonest_index = i;
 	}
     }
@@ -311,12 +319,6 @@ main (int argc, char **argv)
       exit (1);
     }
 
-  // variables to manage timeout
-  struct input_event event;
-
-  // if true then we have got an event, otherwise we have timed out
-  unsigned got_event = 0;
-
   struct pollfd poll_fd;
   poll_fd.fd = read_fd;
   poll_fd.events = POLLIN;
@@ -352,6 +354,11 @@ main (int argc, char **argv)
       return -errno;
     }
 
+  /// variables to manage timeout
+  struct input_event event;
+  // if true then we have got an event, otherwise we have timed out
+  int got_event = 0;
+
   while (rc == LIBEVDEV_READ_STATUS_SYNC
 	 || rc == LIBEVDEV_READ_STATUS_SUCCESS
 	 || rc == -EAGAIN)
@@ -364,32 +371,16 @@ main (int argc, char **argv)
 	  perror ("pending");
 	  exit (1);
 	}
-
-      if (has_pending_events == 1)
-	{
+      else if (has_pending_events == 1)
+	{ // One ore more events available
 	  got_event = 1;
 	  rc = evdev_read_skip_sync (dev, &event);
 	}
       else
-	{
+	{ // No event available.
 	  int soonest_index = soonest_delayed_down ();
-	  int should_poll = 0;
-	  if (soonest_index == -1)
-	    {
-	      // we should poll until a new event (second arg to poll will be -1)
-	      should_poll = 1;
-	    }
-	  else
-	    {
-	      struct timespec now;
-	      clock_gettime (CLOCK_MONOTONIC, &now);
-	      mod_key *tmp = &mod_map[soonest_index];
-	      if (timespec_cmp (&now, &tmp->send_down_at) < 0)
-		{
-		  should_poll = 1;
-		}
-	    }
-	  if (should_poll)
+	  if (soonest_index == -1
+	      || timespec_cmp_now (&mod_map[soonest_index].send_down_at) < 0)
 	    {
 	      if (poll (&poll_fd, 1, -1) <= 0)
 		{
