@@ -5,22 +5,15 @@
 /// while blocking the original keyboard events.
 
 #include "./config.h"
-#include <assert.h>
-#include <bits/time.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <linux/input.h>
-#include <stddef.h>
 #include <stdio.h>
-#include <string.h>
-#include <sys/stat.h>
-#include <sys/types.h>
-#include <unistd.h>
-#include <time.h>
 #include <stdlib.h>
-#include "libevdev/libevdev.h"
-#include "libevdev/libevdev-uinput.h"
-#include "poll.h"
+#include <string.h>
+#include <unistd.h>
+#include <libevdev/libevdev.h>
+#include <libevdev/libevdev-uinput.h>
+#include <poll.h>
 
 #define COUNTOF(x) (sizeof(x) / sizeof(*(x)))
 
@@ -278,75 +271,77 @@ evdev_read_skip_sync (struct libevdev *dev, struct input_event *event)
 int
 main (int argc, char **argv)
 {
-  ms_to_timespec (max_delay, &delay_timespec);
-  struct libevdev *dev = NULL;
-  const char *file;
-  int read_fd;
-  int rc = 1;
   if (argc < 2)
-    exit (1);
+    {
+      fprintf (stderr, "Argument Error: Necessary argument is not given.\n");
+      exit (1);
+    }
 
-  // let (KEY_ENTER), value 0 go through
+  /// Prepare the delay_timespec that will be used in many places.
+  ms_to_timespec (max_delay, &delay_timespec);
+
+  /// let (KEY_ENTER), value 0 go through
   usleep (100000);
 
-  file = argv[1];
-  read_fd = open (file, O_RDONLY);
+  int read_fd = open (argv[1], O_RDONLY);
   if (read_fd < 0)
     {
       perror ("Failed to open device\n");
       exit (1);
     }
 
-  struct pollfd poll_fd;
-  poll_fd.fd = read_fd;
-  poll_fd.events = POLLIN;
+  int ret;
 
-  rc = libevdev_new_from_fd (read_fd, &dev);
-  if (rc < 0)
+  struct libevdev *dev = NULL;
+  ret = libevdev_new_from_fd (read_fd, &dev);
+  if (ret < 0)
     {
-      fprintf (stderr, "Failed to init libevdev (%s)\n", strerror (-rc));
+      fprintf (stderr, "Failed to init libevdev (%s)\n", strerror (-ret));
       exit (1);
     }
 
-  int err;
-  int write_fd;
-  struct libevdev_uinput *uidev;
-
-  write_fd = open ("/dev/uinput", O_RDWR);
+  int write_fd = open ("/dev/uinput", O_RDWR);
   if (write_fd < 0)
     {
       printf ("uifd < 0 (Do you have the right privileges?)\n");
       return -errno;
     }
 
+  struct libevdev_uinput *uidev;
+
   /// IMPORTANT: Creating a new (e.g. /dev/input/event18) input device.
-  err = libevdev_uinput_create_from_device (dev, write_fd, &uidev);
-  if (err != 0)
-    return err;
+  ret = libevdev_uinput_create_from_device (dev, write_fd, &uidev);
+  if (ret != 0)
+    return ret;
 
   /// IMPORTANT: Blocking the events of the original keyboard device.
-  int grab = libevdev_grab (dev, LIBEVDEV_GRAB);
-  if (grab < 0)
+  ret = libevdev_grab (dev, LIBEVDEV_GRAB);
+  if (ret < 0)
     {
-      printf ("grab < 0\n");
+      fprintf (stderr, "grab < 0\n");
       return -errno;
     }
 
-  /// variables to manage timeout
-  struct input_event event;
+  /// For event waiting (blocking)
+  struct pollfd poll_fd;
+  poll_fd.fd = read_fd;
+  poll_fd.events = POLLIN;
 
-  while (rc == LIBEVDEV_READ_STATUS_SYNC
-	 || rc == LIBEVDEV_READ_STATUS_SUCCESS
-	 || rc == -EAGAIN)
+  do
     {
+      /// The documents of `libevdev' says:
+      ///   "You do not need libevdev_has_event_pending() if you're using select(2) or poll(2)."
+      /// But here we need to call `libevdev_has_event_pending' before `poll'
+      /// to make it work.
       int has_pending_events = libevdev_has_event_pending (dev);
       if (has_pending_events < 0)
 	{
-	  perror ("pending");
+	  perror ("libevdev check pending failed");
 	  exit (1);
 	}
       if (has_pending_events == 0)
 	{
+	  /// Block waiting for new events.
 	  if (poll (&poll_fd, 1, -1) <= 0)
 	    {
 	      perror ("poll failed");
@@ -354,8 +349,9 @@ main (int argc, char **argv)
 	    }
 	}
 
-      rc = evdev_read_skip_sync (dev, &event);
-      if (rc == LIBEVDEV_READ_STATUS_SUCCESS)
+      struct input_event event;
+      ret = evdev_read_skip_sync (dev, &event);
+      if (ret == LIBEVDEV_READ_STATUS_SUCCESS)
 	{
 	  if (event.type == EV_KEY)
 	    handle_ev_key (uidev, event.code, event.value);
@@ -363,9 +359,13 @@ main (int argc, char **argv)
 
       handle_timeout (uidev);
     }
+  while (ret == LIBEVDEV_READ_STATUS_SYNC
+	 || ret == LIBEVDEV_READ_STATUS_SUCCESS
+	 || ret == -EAGAIN);
 
-  if (rc != LIBEVDEV_READ_STATUS_SUCCESS && rc != -EAGAIN)
-    fprintf (stderr, "Failed to handle events: %s\n", strerror (-rc));
+  if (ret != LIBEVDEV_READ_STATUS_SUCCESS
+      && ret != -EAGAIN)
+    fprintf (stderr, "Failed to handle events: %s\n", strerror (-ret));
 
   // No need to use free memory (e.g., using libevdev_free) if the
   // program is shutting down.
