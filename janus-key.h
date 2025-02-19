@@ -48,7 +48,8 @@ mod_key_primary_function (mod_key *self)
 }
 
 static inline int
-mod_key_secondary_down_or_held (mod_key *self)
+mod_key_secondary_held (mod_key *self)
 {
-  return (self->state == 1 || self->state == 2) && self->secondary_function > 0;
+  //return (self->state == 1 || self->state == 2) && self->secondary_function > 0;
+  return self->state == 1 && self->secondary_function > 0;
 }

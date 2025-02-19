@@ -144,15 +144,15 @@ send_secondary_function_once (struct libevdev_uinput *uidev, mod_key *m, int val
 }
 
 static void
-send_down_or_held_jks_secondary_function (struct libevdev_uinput *uidev, int value)
+send_secondary_function_all_jks (struct libevdev_uinput *uidev)
 {
   for (size_t i = 0; i < COUNTOF (mod_map); i++)
     {
       mod_key *tmp = &mod_map[i];
-      if (mod_key_secondary_down_or_held (tmp))
+      if (mod_key_secondary_held (tmp))
 	{
 	  tmp->delayed_down = 0;
-	  send_secondary_function_once (uidev, tmp, value);
+	  send_secondary_function_once (uidev, tmp, 1);
 	}
     }
 }
@@ -174,21 +174,22 @@ send_primary_function (struct libevdev_uinput *uidev, unsigned int code, int val
 static void
 handle_ev_key_janus (struct libevdev_uinput *uidev, unsigned int code, int value, mod_key *jk)
 {
-  jk->state = value;
   if (value == 1)
     {
+      jk->state = 1;
+      jk->delayed_down = 1;
       struct timespec scheduled_delayed_down;
       clock_gettime (CLOCK_MONOTONIC, &jk->last_time_down);
       timespec_add (&jk->last_time_down, &delay_timespec, &scheduled_delayed_down);
       jk->send_down_at = scheduled_delayed_down;
-      jk->delayed_down = 1;
     }
   else if (value == 2)
     {
-      /// Nothing to do here, things had already been done in `value == 1' branch.
+      /// Ignore holding/auto-repeating
     }
   else
     {
+      jk->state = 0;
       jk->delayed_down = 0;
       struct timespec sum;
       timespec_add (&jk->last_time_down, &delay_timespec, &sum);
@@ -196,7 +197,7 @@ handle_ev_key_janus (struct libevdev_uinput *uidev, unsigned int code, int value
 	{ // Considered as tap (delayed click is not triggered)
 	  if (!send_secondary_function_once (uidev, jk, 0))
 	    { // last_send is zero, which means this janus key is acting its primary function.
-	      send_down_or_held_jks_secondary_function (uidev, 1);
+	      send_secondary_function_all_jks (uidev);
 	      send_primary_function (uidev, jk->key, 1);
 	      send_primary_function (uidev, jk->key, 0);
 	    }
@@ -211,16 +212,19 @@ handle_ev_key_janus (struct libevdev_uinput *uidev, unsigned int code, int value
 static void
 handle_ev_key_normal_or_mapping (struct libevdev_uinput *uidev, unsigned int code, int value)
 {
-  /// No special handling for key release.
-  if (value == 0)
+  if (value == 1)
+    {
+      send_secondary_function_all_jks (uidev);
+      send_primary_function (uidev, code, 1);
+    }
+  else if (value == 2)
+    {
+      /// Ignore holding/auto-repeating
+    }
+  else
     {
       send_primary_function (uidev, code, 0);
-      return;
     }
-
-  /// For Key DOWN or HELD, send active janus keys' secondary function first.
-  send_down_or_held_jks_secondary_function (uidev, 1);
-  send_primary_function (uidev, code, value);
 }
 
 static void
