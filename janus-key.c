@@ -252,6 +252,35 @@ handle_timeout (struct libevdev_uinput *uidev)
     }
 }
 
+/// The official documents of `libevdev' says:
+///   "You do not need libevdev_has_event_pending() if you're using select(2) or poll(2)."
+/// But that's not the case for this program.
+/// We need to call `libevdev_has_event_pending' before `poll'.
+static void
+evdev_block_for_events (struct libevdev *dev)
+{
+  struct pollfd poll_fd = {.fd = libevdev_get_fd(dev), .events = POLLIN};
+  int has_pending_events = libevdev_has_event_pending (dev);
+  if (has_pending_events == 1)
+    {
+      /// Nothing to do.
+    }
+  else if (has_pending_events == 0)
+    {
+      /// Block waiting for new events.
+      if (poll (&poll_fd, 1, -1) <= 0)
+	{
+	  perror ("poll failed");
+	  exit (1);
+	}
+    }
+  else if (has_pending_events < 0)
+    {
+      perror ("libevdev check pending failed");
+      exit (1);
+    }
+}
+
 static int
 evdev_read_skip_sync (struct libevdev *dev, struct input_event *event)
 {
@@ -326,32 +355,9 @@ main (int argc, char **argv)
       return -errno;
     }
 
-  /// For event waiting (blocking)
-  struct pollfd poll_fd;
-  poll_fd.fd = read_fd;
-  poll_fd.events = POLLIN;
-
   do
     {
-      /// The documents of `libevdev' says:
-      ///   "You do not need libevdev_has_event_pending() if you're using select(2) or poll(2)."
-      /// But here we need to call `libevdev_has_event_pending' before `poll'
-      /// to make it work.
-      int has_pending_events = libevdev_has_event_pending (dev);
-      if (has_pending_events < 0)
-	{
-	  perror ("libevdev check pending failed");
-	  exit (1);
-	}
-      if (has_pending_events == 0)
-	{
-	  /// Block waiting for new events.
-	  if (poll (&poll_fd, 1, -1) <= 0)
-	    {
-	      perror ("poll failed");
-	      exit (1);
-	    }
-	}
+      evdev_block_for_events (dev);
 
       struct input_event event;
       ret = evdev_read_skip_sync (dev, &event);
@@ -367,11 +373,12 @@ main (int argc, char **argv)
 	 || ret == LIBEVDEV_READ_STATUS_SUCCESS
 	 || ret == -EAGAIN);
 
+  /// If the program reach here, something is wrong.
+
   if (ret != LIBEVDEV_READ_STATUS_SUCCESS
       && ret != -EAGAIN)
-    fprintf (stderr, "Failed to handle events: %s\n", strerror (-ret));
+    fprintf (stderr, "Failed to handle events: %s\n",
+	     strerror (-ret));
 
-  // No need to use free memory (e.g., using libevdev_free) if the
-  // program is shutting down.
   return 0;
 }
