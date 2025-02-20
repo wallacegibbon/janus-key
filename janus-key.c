@@ -7,6 +7,7 @@
 #include "./config.h"
 #include <errno.h>
 #include <fcntl.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -20,6 +21,9 @@
 /// Max delay set by user stored as a timespec struct
 /// This time will be filled with `max_delay' defined in config.h
 struct timespec delay_timespec;
+
+static void
+debug(const char *fmt, ...);
 
 static int
 is_in_mod_map (unsigned int key)
@@ -125,7 +129,7 @@ send_key_ev_and_sync (struct libevdev_uinput *uidev, unsigned int code, int valu
       exit (err);
     }
 
-  //printf("Sending %u %u\n", code, value);
+  //debug ("Sending %u %u\n", code, value);
 }
 
 static int
@@ -189,6 +193,11 @@ handle_ev_key_jk (struct libevdev_uinput *uidev, unsigned int code, int value, m
 	      send_secondary_function_all_jks (uidev);
 	      send_primary_function_mod (uidev, jk, 1);
 	      send_primary_function_mod (uidev, jk, 0);
+	    }
+	  else
+	    {
+	      debug ("delayed down was not triggered for key \"%d\".\n",
+		     jk->key);
 	    }
 	}
     }
@@ -290,12 +299,12 @@ evdev_read_skip_sync (struct libevdev *dev, struct input_event *event)
 
   if (r == LIBEVDEV_READ_STATUS_SYNC)
     {
-      printf ("janus_key: dropped\n");
+      debug ("janus_key: dropped\n");
 
       while (r == LIBEVDEV_READ_STATUS_SYNC)
 	r = libevdev_next_event (dev, LIBEVDEV_READ_FLAG_SYNC, event);
 
-      printf ("janus_key: re-synced\n");
+      debug ("janus_key: re-synced\n");
     }
 
   return r;
@@ -306,7 +315,7 @@ main (int argc, char **argv)
 {
   if (argc < 2)
     {
-      fprintf (stderr, "Argument Error: Necessary argument is not given.\n");
+      debug ("Argument Error: Necessary argument is not given.\n");
       exit (1);
     }
 
@@ -329,14 +338,14 @@ main (int argc, char **argv)
   ret = libevdev_new_from_fd (read_fd, &dev);
   if (ret < 0)
     {
-      fprintf (stderr, "Failed to init libevdev (%s)\n", strerror (-ret));
+      debug ("Failed to init libevdev (%s)\n", strerror (-ret));
       exit (1);
     }
 
   int write_fd = open ("/dev/uinput", O_RDWR);
   if (write_fd < 0)
     {
-      printf ("uifd < 0 (Do you have the right privileges?)\n");
+      debug ("uifd < 0 (Do you have the right privileges?)\n");
       return -errno;
     }
 
@@ -351,7 +360,7 @@ main (int argc, char **argv)
   ret = libevdev_grab (dev, LIBEVDEV_GRAB);
   if (ret < 0)
     {
-      fprintf (stderr, "grab < 0\n");
+      debug ("grab < 0\n");
       return -errno;
     }
 
@@ -377,8 +386,20 @@ main (int argc, char **argv)
 
   if (ret != LIBEVDEV_READ_STATUS_SUCCESS
       && ret != -EAGAIN)
-    fprintf (stderr, "Failed to handle events: %s\n",
-	     strerror (-ret));
+    debug ("Failed to handle events: %s\n",
+	   strerror (-ret));
 
   return 0;
+}
+
+static void
+debug(const char *fmt, ...)
+{
+  va_list args;
+  va_start (args, fmt);
+
+  vprintf (fmt, args);
+  fflush (stdout);
+
+  va_end (args);
 }
