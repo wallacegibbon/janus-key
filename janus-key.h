@@ -25,17 +25,12 @@ typedef struct
   unsigned int primary_function;
   unsigned int secondary_function;
 
-  /// Physical state of `key`. (= the last value received)
-  /// This field stores the `value' of a `struct input_event' object.
-  unsigned int state;
-  unsigned int last_secondary_function_value_sent;
+  unsigned int value;
+  unsigned int last_secondary_function_value;
 
   struct timespec last_time_down;
-
-  /// time at which delayed remapping should happen
   struct timespec send_down_at;
-  /// whether delayed remapping should happen
-  unsigned int delayed_down;
+  int delayed_down;
 }
   mod_key;
 
@@ -43,11 +38,4 @@ static inline unsigned int
 mod_key_primary_function (mod_key *self)
 {
   return self->primary_function > 0 ? self->primary_function : self->key;
-}
-
-static inline int
-mod_key_secondary_held (mod_key *self)
-{
-  //return (self->state == 1 || self->state == 2) && self->secondary_function > 0;
-  return self->state == 1 && self->secondary_function > 0;
 }

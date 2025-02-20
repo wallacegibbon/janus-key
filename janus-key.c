@@ -135,10 +135,10 @@ send_key_ev_and_sync (struct libevdev_uinput *uidev, unsigned int code, int valu
 static int
 send_secondary_function_jk_once (struct libevdev_uinput *uidev, mod_key *m, int value)
 {
-  if (m->last_secondary_function_value_sent != value)
+  if (m->last_secondary_function_value != value)
     {
       send_key_ev_and_sync (uidev, m->secondary_function, value);
-      m->last_secondary_function_value_sent = value;
+      m->last_secondary_function_value = value;
       return 1;
     }
   else
@@ -151,7 +151,7 @@ send_secondary_function_all_jks (struct libevdev_uinput *uidev)
   for (size_t i = 0; i < COUNTOF (mod_map); i++)
     {
       mod_key *tmp = &mod_map[i];
-      if (mod_key_secondary_held (tmp))
+      if (tmp->value == 1 && tmp->secondary_function > 0)
 	{
 	  tmp->delayed_down = 0;
 	  send_secondary_function_jk_once (uidev, tmp, 1);
@@ -180,7 +180,7 @@ handle_ev_key_jk (struct libevdev_uinput *uidev, unsigned int code, int value, m
 {
   if (value == 0)
     {
-      jk->state = 0;
+      jk->value = 0;
       jk->delayed_down = 0;
 
       struct timespec trigger_time;
@@ -196,14 +196,14 @@ handle_ev_key_jk (struct libevdev_uinput *uidev, unsigned int code, int value, m
 	    }
 	  else
 	    {
-	      debug ("delayed down was not triggered for key \"%d\".\n",
+	      debug ("delayed down was not triggered for <%d>.\n",
 		     jk->key);
 	    }
 	}
     }
   else if (value == 1)
     {
-      jk->state = 1;
+      jk->value = 1;
       jk->delayed_down = 1;
 
       struct timespec trigger_time;
@@ -254,7 +254,6 @@ handle_timeout (struct libevdev_uinput *uidev)
       mod_key *tmp = &mod_map[i];
       if (tmp->delayed_down && timespec_cmp_now (&tmp->send_down_at) >= 0)
 	{ // The key has been held for more than `max_delay' milliseconds.
-	  // It's secondary function anyway now.
 	  send_secondary_function_jk_once (uidev, tmp, 1);
 	  tmp->delayed_down = 0;
 	}
