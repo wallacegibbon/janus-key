@@ -21,7 +21,6 @@
 /// This time will be filled with `max_delay' defined in config.h
 struct timespec delay_timespec;
 
-/// If `key` is in the mod_map, then return its index. Otherwise return -1.
 static int
 is_in_mod_map (unsigned int key)
 {
@@ -33,7 +32,6 @@ is_in_mod_map (unsigned int key)
   return -1;
 };
 
-/// If `key` is a janus key, then return its index. Otherwise return -1.
 static int
 is_janus (unsigned int key)
 {
@@ -131,7 +129,7 @@ send_key_ev_and_sync (struct libevdev_uinput *uidev, unsigned int code, int valu
 }
 
 static int
-send_secondary_function_once (struct libevdev_uinput *uidev, mod_key *m, int value)
+send_secondary_function_jk_once (struct libevdev_uinput *uidev, mod_key *m, int value)
 {
   if (m->last_secondary_function_value_sent != value)
     {
@@ -152,9 +150,15 @@ send_secondary_function_all_jks (struct libevdev_uinput *uidev)
       if (mod_key_secondary_held (tmp))
 	{
 	  tmp->delayed_down = 0;
-	  send_secondary_function_once (uidev, tmp, 1);
+	  send_secondary_function_jk_once (uidev, tmp, 1);
 	}
     }
+}
+
+static void
+send_primary_function_mod (struct libevdev_uinput *uidev, mod_key *m, int value)
+{
+  send_key_ev_and_sync (uidev, mod_key_primary_function (m), value);
 }
 
 static void
@@ -162,68 +166,64 @@ send_primary_function (struct libevdev_uinput *uidev, unsigned int code, int val
 {
   int i = is_in_mod_map (code);
   if (i >= 0)
-    {
-      mod_key *tmp = &mod_map[i];
-      send_key_ev_and_sync (uidev, mod_key_primary_function (tmp), value);
-    }
+    send_primary_function_mod (uidev, &mod_map[i], value);
   else
     send_key_ev_and_sync (uidev, code, value);
 }
 
-/// Those whose primary_functions are different from their secondary_functions are called `janus'.
 static void
-handle_ev_key_janus (struct libevdev_uinput *uidev, unsigned int code, int value, mod_key *jk)
+handle_ev_key_jk (struct libevdev_uinput *uidev, unsigned int code, int value, mod_key *jk)
 {
-  if (value == 1)
-    {
-      jk->state = 1;
-      jk->delayed_down = 1;
-      struct timespec scheduled_delayed_down;
-      clock_gettime (CLOCK_MONOTONIC, &jk->last_time_down);
-      timespec_add (&jk->last_time_down, &delay_timespec, &scheduled_delayed_down);
-      jk->send_down_at = scheduled_delayed_down;
-    }
-  else if (value == 2)
-    {
-      /// Ignore holding/auto-repeating
-    }
-  else
+  if (value == 0)
     {
       jk->state = 0;
       jk->delayed_down = 0;
-      struct timespec sum;
-      timespec_add (&jk->last_time_down, &delay_timespec, &sum);
-      if (timespec_cmp_now (&sum) < 0)
-	{ // Considered as tap (delayed click is not triggered)
-	  if (!send_secondary_function_once (uidev, jk, 0))
-	    { // last_send is zero, which means this janus key is acting its primary function.
+
+      struct timespec trigger_time;
+      timespec_add (&jk->last_time_down, &delay_timespec, &trigger_time);
+
+      if (!send_secondary_function_jk_once (uidev, jk, 0))
+	{ // state unchanged, which means second function was not triggered.
+	  if (timespec_cmp_now (&trigger_time) < 0)
+	    { // It's a tap
 	      send_secondary_function_all_jks (uidev);
-	      send_primary_function (uidev, jk->key, 1);
-	      send_primary_function (uidev, jk->key, 0);
+	      send_primary_function_mod (uidev, jk, 1);
+	      send_primary_function_mod (uidev, jk, 0);
 	    }
 	}
-      else
-	{ // Not considered as tap (delayed click has already been sent)
-	  send_secondary_function_once (uidev, jk, 0);
-	}
+    }
+  else if (value == 1)
+    {
+      jk->state = 1;
+      jk->delayed_down = 1;
+
+      struct timespec trigger_time;
+      clock_gettime (CLOCK_MONOTONIC, &jk->last_time_down);
+      timespec_add (&jk->last_time_down, &delay_timespec, &trigger_time);
+
+      jk->send_down_at = trigger_time;
+    }
+  else
+    {
+      /// Ignore
     }
 }
 
 static void
-handle_ev_key_normal_or_mapping (struct libevdev_uinput *uidev, unsigned int code, int value)
+handle_ev_key_non_jk (struct libevdev_uinput *uidev, unsigned int code, int value)
 {
-  if (value == 1)
+  if (value == 0)
+    {
+      send_primary_function (uidev, code, 0);
+    }
+  else if (value == 1)
     {
       send_secondary_function_all_jks (uidev);
       send_primary_function (uidev, code, 1);
     }
-  else if (value == 2)
-    {
-      /// Ignore holding/auto-repeating
-    }
   else
     {
-      send_primary_function (uidev, code, 0);
+      /// Ignore
     }
 }
 
@@ -232,9 +232,9 @@ handle_ev_key (struct libevdev_uinput *uidev, unsigned int code, int value)
 {
   int jk_index = is_janus (code);
   if (jk_index >= 0)
-    handle_ev_key_janus (uidev, code, value, &mod_map[jk_index]);
+    handle_ev_key_jk (uidev, code, value, &mod_map[jk_index]);
   else
-    handle_ev_key_normal_or_mapping (uidev, code, value);
+    handle_ev_key_non_jk (uidev, code, value);
 }
 
 static void
@@ -246,7 +246,7 @@ handle_timeout (struct libevdev_uinput *uidev)
       if (tmp->delayed_down && timespec_cmp_now (&tmp->send_down_at) >= 0)
 	{ // The key has been held for more than `max_delay' milliseconds.
 	  // It's secondary function anyway now.
-	  send_secondary_function_once (uidev, tmp, 1);
+	  send_secondary_function_jk_once (uidev, tmp, 1);
 	  tmp->delayed_down = 0;
 	}
     }

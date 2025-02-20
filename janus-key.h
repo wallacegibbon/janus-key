@@ -20,16 +20,14 @@
 
 typedef struct
 {
+  /// `key', `primary_function' and `secondary_function' are all key constants or `0'.
   unsigned int key;
-
-  /// `primary_function' can be 0, when it is 0, use `key' for primary function.
   unsigned int primary_function;
   unsigned int secondary_function;
 
   /// Physical state of `key`. (= the last value received)
   /// This field stores the `value' of a `struct input_event' object.
   unsigned int state;
-
   unsigned int last_secondary_function_value_sent;
 
   struct timespec last_time_down;
