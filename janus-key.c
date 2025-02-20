@@ -152,10 +152,7 @@ send_secondary_function_all_jks (struct libevdev_uinput *uidev)
     {
       mod_key *tmp = &mod_map[i];
       if (tmp->value == 1 && tmp->secondary_function > 0)
-	{
-	  tmp->delayed_down = 0;
-	  send_secondary_function_jk_once (uidev, tmp, 1);
-	}
+	send_secondary_function_jk_once (uidev, tmp, 1);
     }
 }
 
@@ -181,14 +178,11 @@ handle_ev_key_jk (struct libevdev_uinput *uidev, unsigned int code, int value, m
   if (value == 0)
     {
       jk->value = 0;
-      jk->delayed_down = 0;
-
-      struct timespec trigger_time;
-      timespec_add (&jk->last_time_down, &delay_timespec, &trigger_time);
-
       if (!send_secondary_function_jk_once (uidev, jk, 0))
 	{ // state unchanged, which means second function was not triggered.
-	  if (timespec_cmp_now (&trigger_time) < 0)
+	  struct timespec edge_time;
+	  timespec_add (&jk->last_time_down, &delay_timespec, &edge_time);
+	  if (timespec_cmp_now (&edge_time) < 0)
 	    { // It's a tap
 	      send_secondary_function_all_jks (uidev);
 	      send_primary_function_mod (uidev, jk, 1);
@@ -196,21 +190,14 @@ handle_ev_key_jk (struct libevdev_uinput *uidev, unsigned int code, int value, m
 	    }
 	  else
 	    {
-	      debug ("delayed down was not triggered for <%d>.\n",
-		     jk->key);
+	      /// Holding for too long, ignore it.
 	    }
 	}
     }
   else if (value == 1)
     {
       jk->value = 1;
-      jk->delayed_down = 1;
-
-      struct timespec trigger_time;
       clock_gettime (CLOCK_MONOTONIC, &jk->last_time_down);
-      timespec_add (&jk->last_time_down, &delay_timespec, &trigger_time);
-
-      jk->send_down_at = trigger_time;
     }
   else
     {
@@ -244,20 +231,6 @@ handle_ev_key (struct libevdev_uinput *uidev, unsigned int code, int value)
     handle_ev_key_jk (uidev, code, value, &mod_map[jk_index]);
   else
     handle_ev_key_non_jk (uidev, code, value);
-}
-
-static void
-handle_timeout (struct libevdev_uinput *uidev)
-{
-  for (size_t i = 0; i < COUNTOF (mod_map); i++)
-    {
-      mod_key *tmp = &mod_map[i];
-      if (tmp->delayed_down && timespec_cmp_now (&tmp->send_down_at) >= 0)
-	{ // The key has been held for more than `max_delay' milliseconds.
-	  send_secondary_function_jk_once (uidev, tmp, 1);
-	  tmp->delayed_down = 0;
-	}
-    }
 }
 
 /// The official documents of `libevdev' says:
@@ -366,7 +339,6 @@ main (int argc, char **argv)
   do
     {
       evdev_block_for_events (dev);
-
       struct input_event event;
       ret = evdev_read_skip_sync (dev, &event);
       if (ret == LIBEVDEV_READ_STATUS_SUCCESS)
@@ -374,8 +346,6 @@ main (int argc, char **argv)
 	  if (event.type == EV_KEY)
 	    handle_ev_key (uidev, event.code, event.value);
 	}
-
-      handle_timeout (uidev);
     }
   while (ret == LIBEVDEV_READ_STATUS_SYNC
 	 || ret == LIBEVDEV_READ_STATUS_SUCCESS

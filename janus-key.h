@@ -29,8 +29,6 @@ typedef struct
   unsigned int last_secondary_function_value;
 
   struct timespec last_time_down;
-  struct timespec send_down_at;
-  int delayed_down;
 }
   mod_key;
 
