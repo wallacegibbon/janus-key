@@ -21,18 +21,18 @@
 typedef struct
 {
   /// `key', `primary_function' and `secondary_function' are all key constants or `0'.
-  unsigned int key;
-  unsigned int primary_function;
-  unsigned int secondary_function;
+  long key;
+  long primary_function;
+  long secondary_function;
 
-  unsigned int value;
-  unsigned int last_secondary_function_value;
+  long value;
+  long last_secondary_function_value;
 
   struct timespec last_time_down;
 }
   mod_key;
 
-static inline unsigned int
+static inline long
 mod_key_primary_function (mod_key *self)
 {
   return self->primary_function > 0 ? self->primary_function : self->key;

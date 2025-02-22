@@ -26,7 +26,7 @@ static void
 debug(const char *fmt, ...);
 
 static int
-is_in_mod_map (unsigned int key)
+is_in_mod_map (long key)
 {
   for (size_t i = 0; i < COUNTOF (mod_map); i++)
     {
@@ -36,8 +36,8 @@ is_in_mod_map (unsigned int key)
   return -1;
 };
 
-static int
-is_janus (unsigned int key)
+static inline int
+is_janus (long key)
 {
   int i = is_in_mod_map (key);
   if (i >= 0 && mod_map[i].secondary_function > 0)
@@ -70,6 +70,11 @@ timespec_cmp_now (struct timespec *t)
   struct timespec now;
   clock_gettime (CLOCK_MONOTONIC, &now);
   return timespec_cmp (&now, t);
+}
+
+static int
+timespec_check_elapsed (long milliseconds)
+{
 }
 
 static void
@@ -112,7 +117,7 @@ ms_to_timespec (long ms, struct timespec *ts)
 }
 
 static void
-send_key_ev_and_sync (struct libevdev_uinput *uidev, unsigned int code, int value)
+send_key_ev_and_sync (struct libevdev_uinput *uidev, long code, int value)
 {
   int err;
   err = libevdev_uinput_write_event (uidev, EV_KEY, code, value);
@@ -163,7 +168,7 @@ send_primary_function_mod (struct libevdev_uinput *uidev, mod_key *m, int value)
 }
 
 static void
-send_primary_function (struct libevdev_uinput *uidev, unsigned int code, int value)
+send_primary_function (struct libevdev_uinput *uidev, long code, int value)
 {
   int i = is_in_mod_map (code);
   if (i >= 0)
@@ -173,17 +178,22 @@ send_primary_function (struct libevdev_uinput *uidev, unsigned int code, int val
 }
 
 static void
-handle_ev_key_jk (struct libevdev_uinput *uidev, unsigned int code, int value, mod_key *jk)
+handle_ev_key_jk (struct libevdev_uinput *uidev, long code, int value, mod_key *jk)
 {
   if (value == 0)
     {
       jk->value = 0;
-      if (!send_secondary_function_jk_once (uidev, jk, 0))
-	{ // state unchanged, which means second function was not triggered.
+      if (send_secondary_function_jk_once (uidev, jk, 0))
+	{
+	  /// This Janus Key had been worked as secondary function.
+	  /// And it had been release now.  Job done.
+	}
+      else
+	{
 	  struct timespec edge_time;
 	  timespec_add (&jk->last_time_down, &delay_timespec, &edge_time);
 	  if (timespec_cmp_now (&edge_time) < 0)
-	    { // It's a tap
+	    { // It's a normal tap
 	      send_secondary_function_all_jks (uidev);
 	      send_primary_function_mod (uidev, jk, 1);
 	      send_primary_function_mod (uidev, jk, 0);
@@ -206,7 +216,7 @@ handle_ev_key_jk (struct libevdev_uinput *uidev, unsigned int code, int value, m
 }
 
 static void
-handle_ev_key_non_jk (struct libevdev_uinput *uidev, unsigned int code, int value)
+handle_ev_key_non_jk (struct libevdev_uinput *uidev, long code, int value)
 {
   if (value == 0)
     {
@@ -224,7 +234,7 @@ handle_ev_key_non_jk (struct libevdev_uinput *uidev, unsigned int code, int valu
 }
 
 static void
-handle_ev_key (struct libevdev_uinput *uidev, unsigned int code, int value)
+handle_ev_key (struct libevdev_uinput *uidev, long code, int value)
 {
   int jk_index = is_janus (code);
   if (jk_index >= 0)
@@ -263,7 +273,7 @@ evdev_block_for_events (struct libevdev *dev)
 }
 
 static int
-evdev_read_skip_sync (struct libevdev *dev, struct input_event *event)
+evdev_read_and_skip_sync (struct libevdev *dev, struct input_event *event)
 {
   int r = libevdev_next_event (dev,
 			       LIBEVDEV_READ_FLAG_NORMAL | LIBEVDEV_READ_FLAG_BLOCKING,
@@ -340,7 +350,7 @@ main (int argc, char **argv)
     {
       evdev_block_for_events (dev);
       struct input_event event;
-      ret = evdev_read_skip_sync (dev, &event);
+      ret = evdev_read_and_skip_sync (dev, &event);
       if (ret == LIBEVDEV_READ_STATUS_SUCCESS)
 	{
 	  if (event.type == EV_KEY)
